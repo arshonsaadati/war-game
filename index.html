@@ -307,6 +307,130 @@
       letter-spacing: 1px;
     }
 
+    /* --- Army editor controls --- */
+    select {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-family: monospace;
+      flex: 1;
+    }
+
+    .btn-toggle {
+      background: var(--bg-primary);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      width: 100%;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-toggle.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    .btn-toggle:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    .preset-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    .btn-sm {
+      padding: 6px 8px;
+      font-size: 0.75rem;
+    }
+
+    .btn-danger {
+      background: var(--bg-primary);
+      color: var(--red);
+      border: 1px solid var(--red-dim);
+      width: 100%;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--red-dim);
+      border-color: var(--red);
+    }
+
+    .composition {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-family: monospace;
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+
+    /* --- Army editor controls --- */
+    select {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-family: monospace;
+      flex: 1;
+    }
+
+    .btn-toggle {
+      background: var(--bg-primary);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      width: 100%;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-toggle.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    .btn-toggle:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    .preset-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    .btn-sm {
+      padding: 6px 8px;
+      font-size: 0.75rem;
+    }
+
+    .btn-danger {
+      background: var(--bg-primary);
+      color: var(--red);
+      border: 1px solid var(--red-dim);
+      width: 100%;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--red-dim);
+      border-color: var(--red);
+    }
+
+    .composition {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-family: monospace;
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+
     /* --- No GPU fallback --- */
     .no-gpu .viewport {
       display: flex;
@@ -365,6 +489,8 @@
           <span class="army-name red">Red Legion</span>
           <span class="army-units" id="unit-count-a">0 units</span>
         </div>
+        <div class="composition" id="composition-a">Infantry: 0, Archer: 0, Cavalry: 0, Artillery: 0</div>
+        <button class="btn btn-danger btn-sm" id="clear-army-a">Clear Army</button>
       </div>
     </div>
 
@@ -375,6 +501,52 @@
         <div class="army-header">
           <span class="army-name blue">Blue Guard</span>
           <span class="army-units" id="unit-count-b">0 units</span>
+        </div>
+        <div class="composition" id="composition-b">Infantry: 0, Archer: 0, Cavalry: 0, Artillery: 0</div>
+        <button class="btn btn-danger btn-sm" id="clear-army-b">Clear Army</button>
+      </div>
+    </div>
+
+    <!-- Army Editor -->
+    <div class="panel">
+      <div class="panel-title">Army Editor</div>
+      <div class="controls">
+        <button class="btn btn-toggle" id="place-mode">Place Units</button>
+        <div class="control-row">
+          <label for="place-unit-type">Type</label>
+          <select id="place-unit-type">
+            <option value="0">Infantry</option>
+            <option value="1">Archer</option>
+            <option value="2">Cavalry</option>
+            <option value="3">Artillery</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label for="place-army">Army</label>
+          <select id="place-army">
+            <option value="0">Red</option>
+            <option value="1">Blue</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label for="army-size">Army Size</label>
+          <input type="range" id="army-size" min="10" max="200" step="1" value="87">
+          <span id="army-size-label" style="font-size:0.75rem;color:var(--text-dim);min-width:30px;text-align:right;">87</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div class="panel">
+      <div class="panel-title">Preset Formations</div>
+      <div class="controls">
+        <div class="preset-row">
+          <button class="btn btn-secondary btn-sm" id="preset-standard">Standard</button>
+          <button class="btn btn-secondary btn-sm" id="preset-cavalry-rush">Cavalry Rush</button>
+        </div>
+        <div class="preset-row">
+          <button class="btn btn-secondary btn-sm" id="preset-archer-line">Archer Line</button>
+          <button class="btn btn-secondary btn-sm" id="preset-artillery-battery">Artillery Battery</button>
         </div>
       </div>
     </div>
@@ -403,6 +575,21 @@
         </div>
         <button class="btn btn-secondary" id="pause-battle">Pause</button>
         <button class="btn btn-secondary" id="reset">Reset</button>
+      </div>
+    </div>
+
+    <!-- Audio Controls -->
+    <div class="panel">
+      <div class="panel-title">Audio</div>
+      <div class="controls">
+        <div class="control-row">
+          <label for="volume">Volume</label>
+          <input type="range" id="volume" min="0" max="1" step="0.05" value="0.5">
+        </div>
+        <div class="control-row">
+          <label for="mute">Mute</label>
+          <input type="checkbox" id="mute">
+        </div>
       </div>
     </div>
 
@@ -435,7 +622,7 @@
   <div class="viewport">
     <canvas id="battlefield"></canvas>
     <canvas id="battlefield-2d" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></canvas>
-    <div class="viewport-hint">Drag to pan | Scroll to zoom | WASD to move</div>
+    <div class="viewport-hint">Drag to pan | Scroll to zoom | WASD to move | Place mode: click to add, right-click to remove</div>
   </div>
 
   <!-- Footer: Histogram -->

@@ -105,6 +105,76 @@ export function spawnFormation(
 }
 
 /**
+ * Remove a specific unit from an army.
+ */
+export function removeUnit(world: World, army: Army, entityId: EntityId): void {
+  const idx = army.unitIds.indexOf(entityId);
+  if (idx >= 0) {
+    army.unitIds.splice(idx, 1);
+    world.set('army', entityId, army.id, 0); // mark dead
+  }
+}
+
+/**
+ * Remove all units from an army.
+ */
+export function clearArmy(world: World, army: Army): void {
+  for (const id of army.unitIds) {
+    world.set('army', id, army.id, 0);
+  }
+  army.unitIds.length = 0;
+}
+
+/**
+ * Count units per type in an army.
+ */
+export function countUnitsByType(world: World, army: Army): Record<UnitType, number> {
+  const counts: Record<UnitType, number> = {
+    [UnitType.Infantry]: 0,
+    [UnitType.Archer]: 0,
+    [UnitType.Cavalry]: 0,
+    [UnitType.Artillery]: 0,
+  };
+  for (const id of army.unitIds) {
+    const armyData = world.get('army', id);
+    if (armyData[1] > 0) {
+      const unitData = world.get('unit', id);
+      const type = Math.round(unitData[7]) as UnitType;
+      if (type in counts) counts[type]++;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Find the nearest unit to a world position within a max distance.
+ * Returns the entity ID or -1 if none found.
+ */
+export function findNearestUnit(
+  world: World,
+  army: Army,
+  wx: number,
+  wy: number,
+  maxDist: number = 5
+): EntityId {
+  let bestId: EntityId = -1;
+  let bestDist = maxDist;
+  for (const id of army.unitIds) {
+    const armyData = world.get('army', id);
+    if (armyData[1] <= 0) continue;
+    const unitData = world.get('unit', id);
+    const dx = unitData[0] - wx;
+    const dy = unitData[1] - wy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
+/**
  * Build the flat Float32Array for GPU upload.
  * Returns unit data for all alive units.
  */

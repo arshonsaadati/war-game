@@ -7,6 +7,7 @@ import { initGPU } from './engine/gpu';
 import { World } from './engine/ecs';
 import { Camera } from './engine/camera';
 import { InputHandler } from './engine/input';
+import { SoundEngine } from './engine/audio';
 import { Renderer } from './renderer/renderer';
 import { CanvasFallbackRenderer } from './renderer/canvas-fallback';
 import { BattleResult, SimulationConfig } from './simulation/simulator';
@@ -19,6 +20,7 @@ import {
   buildUnitBuffer,
   Army,
 } from './game/army';
+import { ArmyEditor } from './game/army-editor';
 import { Battlefield } from './game/battlefield';
 import { GameLoop } from './game/game-loop';
 import { BattleAnimator } from './game/battle-animator';
@@ -37,6 +39,23 @@ const heatmapOpacity = document.getElementById('heatmap-opacity') as HTMLInputEl
 const playBtn = document.getElementById('play-battle') as HTMLButtonElement;
 const pauseBtn = document.getElementById('pause-battle') as HTMLButtonElement;
 const animSpeedSlider = document.getElementById('anim-speed') as HTMLInputElement;
+const volumeSlider = document.getElementById('volume') as HTMLInputElement;
+const muteCheckbox = document.getElementById('mute') as HTMLInputElement;
+
+// Army editor elements
+const placeModeBtn = document.getElementById('place-mode') as HTMLButtonElement;
+const placeUnitType = document.getElementById('place-unit-type') as HTMLSelectElement;
+const placeArmy = document.getElementById('place-army') as HTMLSelectElement;
+const armySizeSlider = document.getElementById('army-size') as HTMLInputElement;
+const armySizeLabel = document.getElementById('army-size-label') as HTMLElement;
+const compositionA = document.getElementById('composition-a') as HTMLElement;
+const compositionB = document.getElementById('composition-b') as HTMLElement;
+const clearArmyABtn = document.getElementById('clear-army-a') as HTMLButtonElement;
+const clearArmyBBtn = document.getElementById('clear-army-b') as HTMLButtonElement;
+const presetStandard = document.getElementById('preset-standard') as HTMLButtonElement;
+const presetCavalryRush = document.getElementById('preset-cavalry-rush') as HTMLButtonElement;
+const presetArcherLine = document.getElementById('preset-archer-line') as HTMLButtonElement;
+const presetArtilleryBattery = document.getElementById('preset-artillery-battery') as HTMLButtonElement;
 
 // Results display elements
 const resultAName = document.getElementById('result-a-name') as HTMLElement;
@@ -60,6 +79,17 @@ function log(msg: string) {
 
 async function main() {
   log('Initializing WebGPU...');
+
+  // --- Sound Engine ---
+  const sound = new SoundEngine();
+
+  // Wire volume / mute controls
+  volumeSlider.addEventListener('input', () => {
+    sound.setVolume(parseFloat(volumeSlider.value));
+  });
+  muteCheckbox.addEventListener('change', () => {
+    sound.setMuted(muteCheckbox.checked);
+  });
 
   let gpuCtx;
   try {
@@ -120,6 +150,9 @@ async function main() {
   }
 
   setupArmies();
+  // Initial army size slider value matches default formation size
+  armySizeSlider.value = String(armyA.unitIds.length);
+  armySizeLabel.textContent = String(armyA.unitIds.length);
 
   // --- Camera ---
   const camera = new Camera();
@@ -128,6 +161,43 @@ async function main() {
 
   // --- Input ---
   const input = new InputHandler(canvas, camera);
+
+  // --- Army Editor ---
+  const editor = new ArmyEditor(
+    {
+      placeModeBtn, placeUnitType, placeArmy,
+      armySizeSlider, armySizeLabel,
+      compositionA, compositionB,
+      unitCountA, unitCountB,
+      clearArmyA: clearArmyABtn, clearArmyB: clearArmyBBtn,
+      presetStandard, presetCavalryRush, presetArcherLine, presetArtilleryBattery,
+    },
+    {
+      world,
+      getArmyA: () => armyA,
+      getArmyB: () => armyB,
+      setArmyA: (a) => { armyA = a; },
+      setArmyB: (b) => { armyB = b; },
+      onArmyChanged: () => { uploadUnitsToGPU(); },
+    }
+  );
+
+  // Wire placement clicks
+  input.onBattleFieldClick = (wx, wy) => {
+    editor.handlePlaceClick(wx, wy);
+  };
+  input.onRightClick = (wx, wy) => {
+    editor.handleRemoveClick(wx, wy);
+  };
+
+  // Track mouse for ghost preview
+  canvas.addEventListener('mousemove', (e) => {
+    if (editor.isPlaceModeActive) {
+      const rect = canvas.getBoundingClientRect();
+      const [wx, wy] = camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      editor.setGhostPosition(wx, wy);
+    }
+  });
 
   // --- 2D Fallback Renderer (always active as overlay for unit/terrain visibility) ---
   const fallback = new CanvasFallbackRenderer(canvas2d);
@@ -237,6 +307,7 @@ async function main() {
 
   async function runBattle() {
     runBtn.disabled = true;
+    sound.playBattleStart();
     const requestedSims = parseInt(simCountEl.value) || 4096;
 
     const armyAData = buildUnitBuffer(world, armyA);
@@ -276,6 +347,13 @@ async function main() {
     resultPanel.classList.add('has-results');
 
     log(`Done (${mode}) in ${elapsed}ms — ${armyA.name}: ${(result.winProbabilityA * 100).toFixed(1)}% | ${armyB.name}: ${(result.winProbabilityB * 100).toFixed(1)}%`);
+
+    // Play victory/defeat sound based on who wins
+    if (result.winProbabilityA > result.winProbabilityB) {
+      sound.playVictory();
+    } else if (result.winProbabilityB > result.winProbabilityA) {
+      sound.playDefeat();
+    }
 
     // Emit particles at battle midpoint for visual flair
     renderer.particles.emitCombat(30, 100, 170, 100);
@@ -354,9 +432,13 @@ async function main() {
   }
 
   // --- UI event handlers ---
-  runBtn.addEventListener('click', runBattle);
+  runBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    runBattle();
+  });
 
   resetBtn.addEventListener('click', () => {
+    sound.playUIClick();
     // Reset animation if active
     if (battleAnimator) {
       battleAnimator.reset();
@@ -368,6 +450,7 @@ async function main() {
     // Re-create world
     setupArmies();
     uploadUnitsToGPU();
+    editor.updateComposition();
     heatmapData = null;
     lastResult = null;
     resultPanel.classList.remove('has-results');
@@ -383,6 +466,7 @@ async function main() {
   });
 
   playBtn.addEventListener('click', async () => {
+    sound.playUIClick();
     if (!lastResult) {
       log('Run a battle first, then play the animation.');
       return;
@@ -401,6 +485,7 @@ async function main() {
 
     battleAnimator.onCombatEvent((x, y) => {
       renderer.particles.emitCombat(x, y, x, y);
+      sound.playCombatHit();
     });
 
     battleAnimator.start(lastResult);
@@ -410,6 +495,7 @@ async function main() {
   });
 
   pauseBtn.addEventListener('click', () => {
+    sound.playUIClick();
     if (!battleAnimator) return;
 
     if (battleAnimator.state === 'running') {
@@ -480,7 +566,10 @@ async function main() {
         [armyA, armyB],
         heatmapData,
         parseFloat(heatmapOpacity.value),
-        heatmapToggle.checked
+        heatmapToggle.checked,
+        editor.isPlaceModeActive ? editor.ghostPosition : null,
+        editor.selectedUnitType,
+        editor.selectedArmyIndex
       );
     }
   );

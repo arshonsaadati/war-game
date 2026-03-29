@@ -21,6 +21,7 @@ export class InputHandler {
   // Callbacks
   onUnitClick: ((worldX: number, worldY: number) => void) | null = null;
   onBattleFieldClick: ((worldX: number, worldY: number) => void) | null = null;
+  onRightClick: ((worldX: number, worldY: number) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, camera: Camera) {
     this.canvas = canvas;
@@ -88,16 +89,20 @@ export class InputHandler {
   // --- Mouse handlers ---
 
   private onMouseDown = (e: MouseEvent): void => {
-    this.mouseDown = true;
     this.lastMouseX = e.clientX;
     this.lastMouseY = e.clientY;
 
+    const rect = this.canvas.getBoundingClientRect();
+    const [wx, wy] = this.camera.screenToWorld(
+      e.clientX - rect.left,
+      e.clientY - rect.top
+    );
+
     if (e.button === 0) {
-      const [wx, wy] = this.camera.screenToWorld(
-        e.clientX - this.canvas.getBoundingClientRect().left,
-        e.clientY - this.canvas.getBoundingClientRect().top
-      );
+      this.mouseDown = true;
       this.onBattleFieldClick?.(wx, wy);
+    } else if (e.button === 2) {
+      this.onRightClick?.(wx, wy);
     }
   };
 

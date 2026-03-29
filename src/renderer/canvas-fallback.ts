@@ -42,6 +42,9 @@ export class CanvasFallbackRenderer {
     heatmapData: Float32Array | null = null,
     heatmapOpacity: number = 0.4,
     showHeatmap: boolean = true,
+    ghostPos: { x: number; y: number } | null = null,
+    ghostUnitType: number = 0,
+    ghostArmyIndex: number = 0,
   ): void {
     const ctx = this.ctx;
     const w = this.canvas.width;
@@ -194,6 +197,44 @@ export class CanvasFallbackRenderer {
 
         ctx.globalAlpha = 1;
       }
+    }
+
+    // --- Ghost preview for placement mode ---
+    if (ghostPos) {
+      const gx = worldToScreenX(ghostPos.x);
+      const gy = worldToScreenY(ghostPos.y);
+      const gSize = Math.max(3, scale * 1.2);
+      const gColor = ARMY_COLORS[ghostArmyIndex] || '#888';
+
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = gColor;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+
+      const gShape = UNIT_TYPE_SHAPES[ghostUnitType] || 'circle';
+      switch (gShape) {
+        case 'circle':
+          ctx.arc(gx, gy, gSize, 0, Math.PI * 2);
+          break;
+        case 'diamond':
+          ctx.moveTo(gx, gy - gSize);
+          ctx.lineTo(gx + gSize, gy);
+          ctx.lineTo(gx, gy + gSize);
+          ctx.lineTo(gx - gSize, gy);
+          break;
+        case 'triangle':
+          ctx.moveTo(gx, gy - gSize * 1.2);
+          ctx.lineTo(gx + gSize, gy + gSize * 0.6);
+          ctx.lineTo(gx - gSize, gy + gSize * 0.6);
+          break;
+        case 'square':
+          ctx.rect(gx - gSize, gy - gSize, gSize * 2, gSize * 2);
+          break;
+      }
+      ctx.fill();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     // --- Legend ---
