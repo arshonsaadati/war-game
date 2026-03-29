@@ -58,6 +58,18 @@ export class Battlefield {
     return this.terrain[row * this.cols + col] as TerrainType;
   }
 
+  /** Get the raw terrain grid as a plain number array (for serialization). */
+  getTerrainGrid(): number[] {
+    return Array.from(this.terrain);
+  }
+
+  /** Set the raw terrain grid from a plain number array (for deserialization). */
+  setTerrainGrid(grid: number[]): void {
+    for (let i = 0; i < grid.length && i < this.terrain.length; i++) {
+      this.terrain[i] = grid[i];
+    }
+  }
+
   getTerrainAtWorldPos(x: number, y: number): TerrainType {
     const col = Math.floor(x / this.cellSize);
     const row = Math.floor(y / this.cellSize);

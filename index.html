@@ -431,6 +431,69 @@
       margin-top: 4px;
     }
 
+    /* --- Share status --- */
+    .share-status {
+      display: block;
+      text-align: center;
+      font-size: 0.75rem;
+      min-height: 1.2em;
+      color: var(--accent);
+      transition: opacity 0.3s;
+    }
+
+    /* --- Minimap --- */
+    #minimap {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      width: 150px;
+      height: 150px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+      z-index: 10;
+      image-rendering: pixelated;
+    }
+
+    #minimap:hover {
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    /* --- Battle Log --- */
+    #battle-log {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-family: monospace;
+      line-height: 1.6;
+      max-height: 160px;
+      overflow-y: auto;
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+
+    #battle-log:empty {
+      display: none;
+    }
+
+    #battle-log .log-label {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    #battle-log .log-red {
+      color: var(--red);
+    }
+
+    #battle-log .log-blue {
+      color: var(--blue);
+    }
+
+    #battle-log .log-value {
+      color: var(--accent);
+    }
+
     /* --- No GPU fallback --- */
     .no-gpu .viewport {
       display: flex;
@@ -593,6 +656,42 @@
       </div>
     </div>
 
+    <!-- Share -->
+    <div class="panel">
+      <div class="panel-title">Share</div>
+      <div class="controls">
+        <button class="btn btn-secondary" id="share-link">Copy Link</button>
+        <span id="share-status" class="share-status"></span>
+      </div>
+    </div>
+
+    <!-- Save/Load -->
+    <div class="panel">
+      <div class="panel-title">Save / Load</div>
+      <div class="controls">
+        <div class="control-row">
+          <label for="save-name">Name</label>
+          <input type="text" id="save-name" placeholder="My Save" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:0.8rem;font-family:monospace;">
+        </div>
+        <button class="btn btn-primary btn-sm" id="save-game">Save Game</button>
+        <div class="control-row">
+          <label for="load-slot">Slot</label>
+          <select id="load-slot">
+            <option value="">-- no saves --</option>
+          </select>
+        </div>
+        <div class="preset-row">
+          <button class="btn btn-secondary btn-sm" id="load-game">Load</button>
+          <button class="btn btn-danger btn-sm" id="delete-save">Delete</button>
+        </div>
+        <div class="preset-row">
+          <button class="btn btn-secondary btn-sm" id="export-file">Export File</button>
+          <button class="btn btn-secondary btn-sm" id="import-file">Import File</button>
+        </div>
+        <input type="file" id="file-input" accept=".json,application/json" style="display:none;">
+      </div>
+    </div>
+
     <!-- Results -->
     <div class="panel" id="results-panel">
       <div class="panel-title">Results</div>
@@ -615,6 +714,7 @@
         <span>Draws: <span id="result-draws">--</span></span>
         <span>GPU: <span id="result-time">--</span></span>
       </div>
+      <div id="battle-log"></div>
     </div>
   </div>
 
@@ -622,6 +722,7 @@
   <div class="viewport">
     <canvas id="battlefield"></canvas>
     <canvas id="battlefield-2d" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></canvas>
+    <canvas id="minimap" width="150" height="150"></canvas>
     <div class="viewport-hint">Drag to pan | Scroll to zoom | WASD to move | Place mode: click to add, right-click to remove</div>
   </div>
 

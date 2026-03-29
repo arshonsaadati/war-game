@@ -16,6 +16,7 @@ import {
   UNIT_STRIDE,
   UnitType,
   createArmy,
+  spawnUnit,
   spawnFormation,
   buildUnitBuffer,
   Army,
@@ -24,6 +25,25 @@ import { ArmyEditor } from './game/army-editor';
 import { Battlefield } from './game/battlefield';
 import { GameLoop } from './game/game-loop';
 import { BattleAnimator } from './game/battle-animator';
+import { analyzeBattle, renderBattleLogHTML } from './game/battle-stats';
+import { MinimapRenderer } from './renderer/minimap';
+import {
+  hasSharedState,
+  decodeStateFromURL,
+  getShareURL,
+} from './game/share';
+import {
+  serializeGameState,
+  deserializeGameState,
+  exportToJSON,
+  importFromJSON,
+  getSaveSlots,
+  saveToSlot,
+  loadFromSlot,
+  deleteSlot,
+  downloadAsFile,
+  uploadFromFile,
+} from './game/save-load';
 
 // --- UI Elements ---
 const canvas = document.getElementById('battlefield') as HTMLCanvasElement;
@@ -57,6 +77,20 @@ const presetCavalryRush = document.getElementById('preset-cavalry-rush') as HTML
 const presetArcherLine = document.getElementById('preset-archer-line') as HTMLButtonElement;
 const presetArtilleryBattery = document.getElementById('preset-artillery-battery') as HTMLButtonElement;
 
+// Save/Load elements
+const saveBtn = document.getElementById('save-game') as HTMLButtonElement;
+const saveNameInput = document.getElementById('save-name') as HTMLInputElement;
+const loadSlotSelect = document.getElementById('load-slot') as HTMLSelectElement;
+const loadBtn = document.getElementById('load-game') as HTMLButtonElement;
+const deleteSaveBtn = document.getElementById('delete-save') as HTMLButtonElement;
+const exportFileBtn = document.getElementById('export-file') as HTMLButtonElement;
+const importFileBtn = document.getElementById('import-file') as HTMLButtonElement;
+const fileInput = document.getElementById('file-input') as HTMLInputElement;
+
+// Share elements
+const shareLinkBtn = document.getElementById('share-link') as HTMLButtonElement;
+const shareStatus = document.getElementById('share-status') as HTMLSpanElement;
+
 // Results display elements
 const resultAName = document.getElementById('result-a-name') as HTMLElement;
 const resultAWinPct = document.getElementById('result-a-win-pct') as HTMLElement;
@@ -71,6 +105,8 @@ const resultTime = document.getElementById('result-time') as HTMLElement;
 const resultPanel = document.getElementById('results-panel') as HTMLElement;
 const unitCountA = document.getElementById('unit-count-a') as HTMLElement;
 const unitCountB = document.getElementById('unit-count-b') as HTMLElement;
+const battleLogEl = document.getElementById('battle-log') as HTMLElement;
+const minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
 
 function log(msg: string) {
   statusEl.textContent = msg;
@@ -150,6 +186,34 @@ async function main() {
   }
 
   setupArmies();
+
+  // --- Check for shared state in URL ---
+  if (hasSharedState()) {
+    const shared = decodeStateFromURL(window.location.href);
+    if (shared) {
+      // Clear default armies
+      for (const id of armyA.unitIds) world.set('army', id, armyA.id, 0);
+      for (const id of armyB.unitIds) world.set('army', id, armyB.id, 0);
+      armyA.unitIds.length = 0;
+      armyB.unitIds.length = 0;
+
+      // Regenerate terrain with the shared seed
+      battlefield.generateRandom(shared.seed);
+
+      // Rebuild armies from shared units
+      for (const u of shared.units) {
+        const targetArmy = u.armyId === 0 ? armyA : armyB;
+        spawnUnit(world, targetArmy, u.unitType, u.posX, u.posY);
+      }
+
+      unitCountA.textContent = `${armyA.unitIds.length} units`;
+      unitCountB.textContent = `${armyB.unitIds.length} units`;
+      log(`Loaded shared battle (${shared.units.length} units).`);
+      // Clear the hash to avoid re-loading on refresh after edits
+      history.replaceState(null, '', window.location.pathname);
+    }
+  }
+
   // Initial army size slider value matches default formation size
   armySizeSlider.value = String(armyA.unitIds.length);
   armySizeLabel.textContent = String(armyA.unitIds.length);
@@ -201,6 +265,12 @@ async function main() {
 
   // --- 2D Fallback Renderer (always active as overlay for unit/terrain visibility) ---
   const fallback = new CanvasFallbackRenderer(canvas2d);
+
+  // --- Minimap ---
+  const minimap = new MinimapRenderer(minimapCanvas);
+  minimap.onClickPosition = (worldX, worldY) => {
+    camera.setPosition(worldX, worldY);
+  };
 
   // --- Renderer ---
   const renderer = new Renderer(device, canvas);
@@ -365,6 +435,10 @@ async function main() {
     // Draw histogram
     drawHistogram(result.rawResults.map(r => r.armyASurviving - r.armyBSurviving));
 
+    // Detailed battle stats and log
+    const stats = analyzeBattle(result, world, armyA, armyB, battlefield);
+    renderBattleLogHTML(battleLogEl, stats, armyA.name, armyB.name);
+
     runBtn.disabled = false;
   }
 
@@ -454,7 +528,144 @@ async function main() {
     heatmapData = null;
     lastResult = null;
     resultPanel.classList.remove('has-results');
+    battleLogEl.innerHTML = '';
     log('Battlefield reset.');
+  });
+
+  // --- Save/Load UI wiring ---
+  function populateSaveSlots() {
+    const slots = getSaveSlots();
+    loadSlotSelect.innerHTML = '';
+    if (slots.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '-- no saves --';
+      loadSlotSelect.appendChild(opt);
+    } else {
+      for (const slot of slots) {
+        const opt = document.createElement('option');
+        opt.value = slot.name;
+        const date = new Date(slot.timestamp).toLocaleString();
+        opt.textContent = `${slot.name} (${slot.unitCount} units, ${date})`;
+        loadSlotSelect.appendChild(opt);
+      }
+    }
+  }
+
+  function rebuildFromState(data: ReturnType<typeof importFromJSON>) {
+    // Clear existing armies from world
+    for (const id of armyA.unitIds) world.set('army', id, armyA.id, 0);
+    for (const id of armyB.unitIds) world.set('army', id, armyB.id, 0);
+    armyA.unitIds.length = 0;
+    armyB.unitIds.length = 0;
+
+    const result = deserializeGameState(data, world);
+    const [newA, newB] = result.armies;
+
+    if (newA) { armyA = newA; }
+    if (newB) { armyB = newB; }
+
+    // Update battlefield terrain
+    const bf = result.battlefield;
+    for (let r = 0; r < bf.rows; r++) {
+      for (let c = 0; c < bf.cols; c++) {
+        battlefield.setTerrain(c, r, bf.getTerrain(c, r));
+      }
+    }
+
+    uploadUnitsToGPU();
+    renderer.terrain.updateTerrain(
+      battlefield.buildTerrainBuffer(),
+      battlefield.cols,
+      battlefield.rows
+    );
+    editor.updateComposition();
+    unitCountA.textContent = `${armyA.unitIds.length} units`;
+    unitCountB.textContent = `${armyB.unitIds.length} units`;
+  }
+
+  // Populate on startup
+  populateSaveSlots();
+
+  saveBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    const name = saveNameInput.value.trim() || `save-${Date.now()}`;
+    const state = serializeGameState(world, [armyA, armyB], battlefield);
+    saveToSlot(name, state);
+    populateSaveSlots();
+    log(`Saved: ${name}`);
+  });
+
+  loadBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    const name = loadSlotSelect.value;
+    if (!name) { log('No save selected.'); return; }
+    const data = loadFromSlot(name);
+    if (!data) { log('Failed to load save.'); return; }
+    rebuildFromState(data);
+    log(`Loaded: ${name}`);
+  });
+
+  deleteSaveBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    const name = loadSlotSelect.value;
+    if (!name) { log('No save selected.'); return; }
+    deleteSlot(name);
+    populateSaveSlots();
+    log(`Deleted: ${name}`);
+  });
+
+  exportFileBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    const state = serializeGameState(world, [armyA, armyB], battlefield);
+    const name = saveNameInput.value.trim() || 'war-game-save';
+    downloadAsFile(state, name);
+    log(`Exported: ${name}.json`);
+  });
+
+  importFileBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    uploadFromFile()
+      .then((data) => {
+        rebuildFromState(data);
+        log('Imported save from file.');
+      })
+      .catch((err) => {
+        log(`Import failed: ${(err as Error).message}`);
+      });
+  });
+
+  // Also wire the hidden file input for direct use
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = importFromJSON(reader.result as string);
+        rebuildFromState(data);
+        log('Imported save from file.');
+      } catch (err) {
+        log(`Import failed: ${(err as Error).message}`);
+      }
+    };
+    reader.readAsText(file);
+    fileInput.value = ''; // reset for re-upload
+  });
+
+  // --- Share button wiring ---
+  shareLinkBtn.addEventListener('click', () => {
+    sound.playUIClick();
+    const url = getShareURL(world, [armyA, armyB], battlefield, 42);
+    navigator.clipboard.writeText(url).then(() => {
+      shareStatus.textContent = 'Copied!';
+      setTimeout(() => { shareStatus.textContent = ''; }, 2000);
+      log('Share link copied to clipboard.');
+    }).catch(() => {
+      // Fallback: select a prompt
+      shareStatus.textContent = 'Copy failed — check browser permissions.';
+      setTimeout(() => { shareStatus.textContent = ''; }, 3000);
+    });
   });
 
   heatmapToggle.addEventListener('change', () => {
@@ -571,6 +782,9 @@ async function main() {
         editor.selectedUnitType,
         editor.selectedArmyIndex
       );
+
+      // Minimap overlay
+      minimap.render(camera, battlefield, world, [armyA, armyB]);
     }
   );
 
