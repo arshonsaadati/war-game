@@ -269,7 +269,7 @@ async function run() {
             const el = document.getElementById('result-a-win-pct');
             return el && el.textContent && el.textContent !== '--';
           },
-          { timeout: 30000 }
+          { timeout: 15000 }
         );
       } catch {
         // Timeout — check what happened
@@ -344,14 +344,14 @@ async function run() {
       // Run second battle
       log('Running second battle (256 sims)...');
       try {
-        await page.waitForSelector('#run-battle:not([disabled])', { timeout: 30000 });
+        await page.waitForSelector('#run-battle:not([disabled])', { timeout: 15000 });
         await page.click('#run-battle');
         await page.waitForFunction(
           () => {
             const el = document.getElementById('result-a-win-pct');
             return el && el.textContent && el.textContent !== '--';
           },
-          { timeout: 30000 }
+          { timeout: 15000 }
         );
       } catch {
         // Timeout ok

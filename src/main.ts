@@ -246,7 +246,7 @@ async function main() {
     terrainData: Float32Array,
     config: SimulationConfig,
   ): Promise<BattleResult | null> {
-    const GPU_TIMEOUT_MS = 5000;
+    const GPU_TIMEOUT_MS = 3000;
     try {
       const gpuPromise = simulator.runBattle(armyAData, armyBData, terrainData, config);
       const timeoutPromise = new Promise<null>((resolve) =>
