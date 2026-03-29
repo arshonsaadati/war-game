@@ -217,4 +217,8 @@ export class CanvasFallbackRenderer {
       ctx.fillText(`  ${item.shape === 'circle' ? '●' : item.shape === 'diamond' ? '◆' : item.shape === 'triangle' ? '▲' : '■'} ${item.label}`, w - 125, ly);
     });
   }
+
+  destroy(): void {
+    // No GPU resources to clean up for Canvas2D
+  }
 }
