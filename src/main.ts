@@ -8,7 +8,9 @@ import { World } from './engine/ecs';
 import { Camera } from './engine/camera';
 import { InputHandler } from './engine/input';
 import { Renderer } from './renderer/renderer';
-import { BattleSimulator, BattleResult } from './simulation/simulator';
+import { CanvasFallbackRenderer } from './renderer/canvas-fallback';
+import { BattleSimulator, BattleResult, SimulationConfig } from './simulation/simulator';
+import { CPUBattleSimulator, CPU_DEFAULT_SIMULATIONS } from './simulation/cpu-simulator';
 import {
   UNIT_STRIDE,
   UnitType,
@@ -23,6 +25,7 @@ import { BattleAnimator } from './game/battle-animator';
 
 // --- UI Elements ---
 const canvas = document.getElementById('battlefield') as HTMLCanvasElement;
+const canvas2d = document.getElementById('battlefield-2d') as HTMLCanvasElement;
 const histogramCanvas = document.getElementById('histogram') as HTMLCanvasElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 const fpsEl = document.getElementById('fps') as HTMLSpanElement;
@@ -78,6 +81,8 @@ async function main() {
     canvas.height = Math.floor(rect.height * devicePixelRatio);
     canvas.style.width = `${rect.width}px`;
     canvas.style.height = `${rect.height}px`;
+    canvas2d.width = Math.floor(rect.width * devicePixelRatio);
+    canvas2d.height = Math.floor(rect.height * devicePixelRatio);
     camera.setViewport(canvas.width, canvas.height);
   }
 
@@ -124,6 +129,9 @@ async function main() {
   // --- Input ---
   const input = new InputHandler(canvas, camera);
 
+  // --- 2D Fallback Renderer (always active as overlay for unit/terrain visibility) ---
+  const fallback = new CanvasFallbackRenderer(canvas2d);
+
   // --- Renderer ---
   const renderer = new Renderer(device, canvas);
   await renderer.initialize();
@@ -137,7 +145,15 @@ async function main() {
 
   // --- Simulator ---
   const simulator = new BattleSimulator(device);
-  await simulator.initialize();
+  const cpuSimulator = new CPUBattleSimulator();
+  let gpuAvailable = true;
+
+  try {
+    await simulator.initialize();
+  } catch (e) {
+    console.error('[war-game] GPU compute shader compilation failed, using CPU fallback:', e);
+    gpuAvailable = false;
+  }
 
   // --- Upload units to renderer ---
   function uploadUnitsToGPU() {
@@ -223,23 +239,62 @@ async function main() {
   // --- Battle execution ---
   let lastResult: BattleResult | null = null;
 
+  /** Run GPU simulation with a timeout; returns null if it hangs or fails. */
+  async function tryGPUBattle(
+    armyAData: Float32Array,
+    armyBData: Float32Array,
+    terrainData: Float32Array,
+    config: SimulationConfig,
+  ): Promise<BattleResult | null> {
+    const GPU_TIMEOUT_MS = 5000;
+    try {
+      const gpuPromise = simulator.runBattle(armyAData, armyBData, terrainData, config);
+      const timeoutPromise = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), GPU_TIMEOUT_MS),
+      );
+      return await Promise.race([gpuPromise, timeoutPromise]);
+    } catch (e) {
+      console.error('[war-game] GPU runBattle failed:', e);
+      return null;
+    }
+  }
+
   async function runBattle() {
     runBtn.disabled = true;
-    const numSims = parseInt(simCountEl.value) || 4096;
-    log(`Running Monte Carlo (${numSims} simulations)...`);
+    const requestedSims = parseInt(simCountEl.value) || 4096;
 
     const armyAData = buildUnitBuffer(world, armyA);
     const armyBData = buildUnitBuffer(world, armyB);
     const terrainData = battlefield.buildTerrainBuffer();
 
-    const t0 = performance.now();
-
-    const result = await simulator.runBattle(armyAData, armyBData, terrainData, {
-      numSimulations: numSims,
+    const baseConfig: SimulationConfig = {
+      numSimulations: requestedSims,
       terrainCols: battlefield.cols,
       terrainRows: battlefield.rows,
       cellSize: battlefield.cellSize,
-    });
+    };
+
+    let result: BattleResult | null = null;
+    let mode: 'GPU' | 'CPU' = 'GPU';
+    const t0 = performance.now();
+
+    if (gpuAvailable) {
+      log(`Running Monte Carlo (GPU, ${requestedSims} simulations)...`);
+      result = await tryGPUBattle(armyAData, armyBData, terrainData, baseConfig);
+
+      if (!result) {
+        console.warn('[war-game] GPU compute timed out or failed, falling back to CPU');
+        gpuAvailable = false; // don't try GPU again for subsequent runs
+      }
+    }
+
+    if (!result) {
+      mode = 'CPU';
+      const cpuSims = Math.min(requestedSims, CPU_DEFAULT_SIMULATIONS);
+      log(`Running Monte Carlo (CPU fallback, ${cpuSims} simulations)...`);
+      const cpuConfig = { ...baseConfig, numSimulations: cpuSims };
+      result = cpuSimulator.runBattle(armyAData, armyBData, terrainData, cpuConfig);
+    }
 
     const elapsed = (performance.now() - t0).toFixed(1);
     lastResult = result;
@@ -257,7 +312,7 @@ async function main() {
     resultTime.textContent = `${elapsed}ms`;
     resultPanel.classList.add('has-results');
 
-    log(`Done in ${elapsed}ms — ${armyA.name}: ${(result.winProbabilityA * 100).toFixed(1)}% | ${armyB.name}: ${(result.winProbabilityB * 100).toFixed(1)}%`);
+    log(`Done (${mode}) in ${elapsed}ms — ${armyA.name}: ${(result.winProbabilityA * 100).toFixed(1)}% | ${armyB.name}: ${(result.winProbabilityB * 100).toFixed(1)}%`);
 
     // Emit particles at battle midpoint for visual flair
     renderer.particles.emitCombat(30, 100, 170, 100);
@@ -451,6 +506,18 @@ async function main() {
         dt,
         { cols: battlefield.cols, rows: battlefield.rows, cellSize: battlefield.cellSize },
         -1 // no selection yet
+      );
+
+      // 2D Canvas overlay — always renders terrain + units as a fallback
+      // This ensures visibility even when WebGPU render pipeline doesn't produce output
+      fallback.render(
+        camera,
+        battlefield,
+        world,
+        [armyA, armyB],
+        heatmapData,
+        parseFloat(heatmapOpacity.value),
+        heatmapToggle.checked
       );
     }
   );
