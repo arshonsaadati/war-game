@@ -9,7 +9,7 @@ import { Camera } from './engine/camera';
 import { InputHandler } from './engine/input';
 import { Renderer } from './renderer/renderer';
 import { CanvasFallbackRenderer } from './renderer/canvas-fallback';
-import { BattleSimulator, BattleResult, SimulationConfig } from './simulation/simulator';
+import { BattleResult, SimulationConfig } from './simulation/simulator';
 import { CPUBattleSimulator, CPU_DEFAULT_SIMULATIONS } from './simulation/cpu-simulator';
 import {
   UNIT_STRIDE,
@@ -143,17 +143,8 @@ async function main() {
     battlefield.rows
   );
 
-  // --- Simulator ---
-  const simulator = new BattleSimulator(device);
+  // --- Simulator (CPU-based — reliable on all devices) ---
   const cpuSimulator = new CPUBattleSimulator();
-  let gpuAvailable = true;
-
-  try {
-    await simulator.initialize();
-  } catch (e) {
-    console.error('[war-game] GPU compute shader compilation failed, using CPU fallback:', e);
-    gpuAvailable = false;
-  }
 
   // --- Upload units to renderer ---
   function uploadUnitsToGPU() {
@@ -239,25 +230,10 @@ async function main() {
   // --- Battle execution ---
   let lastResult: BattleResult | null = null;
 
-  /** Run GPU simulation with a timeout; returns null if it hangs or fails. */
-  async function tryGPUBattle(
-    armyAData: Float32Array,
-    armyBData: Float32Array,
-    terrainData: Float32Array,
-    config: SimulationConfig,
-  ): Promise<BattleResult | null> {
-    const GPU_TIMEOUT_MS = 3000;
-    try {
-      const gpuPromise = simulator.runBattle(armyAData, armyBData, terrainData, config);
-      const timeoutPromise = new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), GPU_TIMEOUT_MS),
-      );
-      return await Promise.race([gpuPromise, timeoutPromise]);
-    } catch (e) {
-      console.error('[war-game] GPU runBattle failed:', e);
-      return null;
-    }
-  }
+  // GPU compute for Monte Carlo is unreliable (mapAsync can hang the event loop
+  // on many devices). Use CPU simulation by default — it's fast enough.
+  // GPU is used only for rendering.
+  let useGPUCompute = false; // Disabled by default — CPU fallback is reliable
 
   async function runBattle() {
     runBtn.disabled = true;
@@ -274,27 +250,14 @@ async function main() {
       cellSize: battlefield.cellSize,
     };
 
-    let result: BattleResult | null = null;
-    let mode: 'GPU' | 'CPU' = 'GPU';
+    let result: BattleResult;
+    const mode = 'CPU';
+    const cpuSims = Math.min(requestedSims, CPU_DEFAULT_SIMULATIONS);
+    log(`Running Monte Carlo (${cpuSims} simulations)...`);
     const t0 = performance.now();
 
-    if (gpuAvailable) {
-      log(`Running Monte Carlo (GPU, ${requestedSims} simulations)...`);
-      result = await tryGPUBattle(armyAData, armyBData, terrainData, baseConfig);
-
-      if (!result) {
-        console.warn('[war-game] GPU compute timed out or failed, falling back to CPU');
-        gpuAvailable = false; // don't try GPU again for subsequent runs
-      }
-    }
-
-    if (!result) {
-      mode = 'CPU';
-      const cpuSims = Math.min(requestedSims, CPU_DEFAULT_SIMULATIONS);
-      log(`Running Monte Carlo (CPU fallback, ${cpuSims} simulations)...`);
-      const cpuConfig = { ...baseConfig, numSimulations: cpuSims };
-      result = cpuSimulator.runBattle(armyAData, armyBData, terrainData, cpuConfig);
-    }
+    const cpuConfig = { ...baseConfig, numSimulations: cpuSims };
+    result = cpuSimulator.runBattle(armyAData, armyBData, terrainData, cpuConfig);
 
     const elapsed = (performance.now() - t0).toFixed(1);
     lastResult = result;
