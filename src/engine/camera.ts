@@ -14,8 +14,8 @@ export class Camera {
   viewportHeight = 600;
 
   // Constraints
-  minZoom = 0.1;
-  maxZoom = 10;
+  minZoom = 0.5;
+  maxZoom = 5;
   worldBoundsMinX = -50;
   worldBoundsMinY = -50;
   worldBoundsMaxX = 250;
@@ -33,18 +33,32 @@ export class Camera {
   }
 
   pan(dx: number, dy: number): void {
-    this.targetX += dx / this.zoom;
-    this.targetY += dy / this.zoom;
+    // Positive dx moves the view right (camera moves left in world space)
+    this.targetX -= dx / this.zoom;
+    this.targetY -= dy / this.zoom;
     this.clampTarget();
   }
 
   zoomAt(factor: number, screenX: number, screenY: number): void {
-    const worldBefore = this.screenToWorld(screenX, screenY);
+    // Compute cursor position in world space using current target state
+    const ndcX = (screenX / this.viewportWidth) * 2 - 1;
+    const ndcY = 1 - (screenY / this.viewportHeight) * 2;
+
+    const halfWBefore = (this.viewportWidth / 2) / this.targetZoom;
+    const halfHBefore = (this.viewportHeight / 2) / this.targetZoom;
+    const worldBeforeX = this.targetX + ndcX * halfWBefore;
+    const worldBeforeY = this.targetY + ndcY * halfHBefore;
+
     this.targetZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.targetZoom * factor));
-    // Adjust position so zoom centers on cursor
-    const worldAfter = this.screenToWorld(screenX, screenY);
-    this.targetX += worldBefore[0] - worldAfter[0];
-    this.targetY += worldBefore[1] - worldAfter[1];
+
+    // Recompute cursor world position under new zoom and adjust so it stays fixed
+    const halfWAfter = (this.viewportWidth / 2) / this.targetZoom;
+    const halfHAfter = (this.viewportHeight / 2) / this.targetZoom;
+    const worldAfterX = this.targetX + ndcX * halfWAfter;
+    const worldAfterY = this.targetY + ndcY * halfHAfter;
+
+    this.targetX += worldBeforeX - worldAfterX;
+    this.targetY += worldBeforeY - worldAfterY;
     this.clampTarget();
   }
 

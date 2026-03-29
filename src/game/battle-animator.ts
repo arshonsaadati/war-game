@@ -1,14 +1,14 @@
 /**
  * Battle animation system.
- * Takes Monte Carlo results and animates a representative battle over time,
- * mutating ECS data (positions, isAlive) without touching WebGPU directly.
+ * Takes Monte Carlo results and animates a representative battle over time.
+ * Units march toward each other, clash at the midpoint, and casualties
+ * drop based on the simulation outcome.
  */
 
 import { World, EntityId } from '../engine/ecs';
 import { Army } from './army';
 import { Battlefield } from './battlefield';
 import { BattleResult } from '../simulation/simulator';
-import { findPath, worldToGrid, gridToWorld } from './pathfinding';
 
 export type AnimationState = 'idle' | 'running' | 'paused' | 'complete';
 
@@ -19,15 +19,13 @@ interface UnitAnimState {
   entityId: EntityId;
   armyIdx: 0 | 1;
   alive: boolean;
-  // Path in world coordinates
-  path: [number, number][];
-  pathIndex: number;
-  // Scheduled death time (normalized 0..1 across animation), or -1 if survives
+  startX: number;
+  startY: number;
+  targetX: number;
+  targetY: number;
+  // Scheduled death time (normalized 0..1), or -1 if survives
   deathTime: number;
-  // Target opponent entity for combat
-  targetId: EntityId | null;
-  // Combat engagement range (world units)
-  inCombat: boolean;
+  hasFired: boolean; // has emitted combat event
 }
 
 export interface BattleAnimatorConfig {
@@ -86,10 +84,6 @@ export class BattleAnimator {
     this.onCombat = cb;
   }
 
-  /**
-   * Start animating a battle from the given Monte Carlo result.
-   * Takes a single representative result from rawResults to decide who dies.
-   */
   start(result: BattleResult): void {
     this.result = result;
     this._state = 'running';
@@ -120,48 +114,68 @@ export class BattleAnimator {
     return this._state === 'complete';
   }
 
-  /**
-   * Advance the animation by dt seconds.
-   * Mutates ECS unit positions and army isAlive flags.
-   */
   update(dt: number): void {
     if (this._state !== 'running') return;
 
     this._elapsed += dt * this._speed;
     this._progress = Math.min(this._elapsed / this._duration, 1);
 
-    // Move units and process combat
     for (const us of this.unitStates) {
       if (!us.alive) continue;
 
       // Check for death
       if (us.deathTime >= 0 && this._progress >= us.deathTime) {
         us.alive = false;
-        this.world.set('army', us.entityId, us.armyIdx, 0); // isAlive = 0
+        this.world.set('army', us.entityId, us.armyIdx, 0);
 
-        // Emit combat effect at death position
+        // Combat effect at death
         const unitData = this.world.get('unit', us.entityId);
-        if (this.onCombat) {
-          this.onCombat(unitData[0], unitData[1]);
-        }
+        this.onCombat?.(unitData[0], unitData[1]);
         continue;
       }
 
-      // Move unit along path toward enemy
-      this.moveUnit(us, dt * this._speed);
+      // Move unit in a straight line from start toward target
+      // March phase is 0% to 50%, combat phase is 50% to 100%
+      const marchProgress = Math.min(this._progress / 0.5, 1);
+
+      // Don't march past the combat range of the target
+      const totalDx = us.targetX - us.startX;
+      const totalDy = us.targetY - us.startY;
+      const totalDist = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+      const stopDist = Math.max(0, totalDist - this._combatRange);
+      const marchDist = stopDist * marchProgress;
+
+      let posX: number, posY: number;
+      if (totalDist > 0.1) {
+        const dirX = totalDx / totalDist;
+        const dirY = totalDy / totalDist;
+        posX = us.startX + dirX * marchDist;
+        posY = us.startY + dirY * marchDist;
+      } else {
+        posX = us.startX;
+        posY = us.startY;
+      }
+
+      // Emit combat event when units reach engagement range
+      if (marchProgress >= 0.95 && !us.hasFired) {
+        us.hasFired = true;
+        this.onCombat?.(posX, posY);
+      }
+
+      // Update ECS position
+      const unitData = this.world.get('unit', us.entityId);
+      this.world.set('unit', us.entityId,
+        posX, posY,
+        unitData[2], unitData[3], unitData[4], unitData[5], unitData[6], unitData[7]
+      );
     }
 
-    // Check for completion
     if (this._progress >= 1) {
       this._state = 'complete';
     }
   }
 
-  /**
-   * Reset the animation: restore all units to their original positions and alive state.
-   */
   reset(): void {
-    // Restore original state
     for (const [entityId, [px, py]] of this.originalPositions) {
       const unitData = this.world.get('unit', entityId);
       this.world.set('unit', entityId,
@@ -200,145 +214,82 @@ export class BattleAnimator {
 
     if (!this.result || this.result.rawResults.length === 0) return;
 
-    // Pick the median result as representative
+    // Pick the median result
     const sorted = [...this.result.rawResults].sort(
       (a, b) => (a.armyASurviving - a.armyBSurviving) - (b.armyASurviving - b.armyBSurviving)
     );
     const median = sorted[Math.floor(sorted.length / 2)];
 
-    // Determine how many units die from each army
     const aDead = Math.max(0, this.armyA.unitIds.length - median.armyASurviving);
     const bDead = Math.max(0, this.armyB.unitIds.length - median.armyBSurviving);
 
-    // Build unit anim states for army A
+    // Calculate average enemy position for each army (march target)
+    const avgEnemyA = this.getArmyCenter(this.armyB);
+    const avgEnemyB = this.getArmyCenter(this.armyA);
+
+    // Army A units
     const aDeathIndices = this.selectDeathIndices(this.armyA.unitIds.length, aDead);
     for (let i = 0; i < this.armyA.unitIds.length; i++) {
       const entityId = this.armyA.unitIds[i];
+      const unitData = this.world.get('unit', entityId);
       const dies = aDeathIndices.has(i);
-      this.unitStates.push(this.buildUnitState(entityId, 0, dies, this.armyB));
+      // Death during combat phase (50%-95%)
+      const deathTime = dies ? 0.5 + seededRandom(entityId) * 0.45 : -1;
+
+      this.unitStates.push({
+        entityId,
+        armyIdx: 0,
+        alive: true,
+        startX: unitData[0],
+        startY: unitData[1],
+        targetX: avgEnemyA[0],
+        targetY: avgEnemyA[1],
+        deathTime,
+        hasFired: false,
+      });
     }
 
-    // Build unit anim states for army B
+    // Army B units
     const bDeathIndices = this.selectDeathIndices(this.armyB.unitIds.length, bDead);
     for (let i = 0; i < this.armyB.unitIds.length; i++) {
       const entityId = this.armyB.unitIds[i];
+      const unitData = this.world.get('unit', entityId);
       const dies = bDeathIndices.has(i);
-      this.unitStates.push(this.buildUnitState(entityId, 1, dies, this.armyA));
+      const deathTime = dies ? 0.5 + seededRandom(entityId) * 0.45 : -1;
+
+      this.unitStates.push({
+        entityId,
+        armyIdx: 1,
+        alive: true,
+        startX: unitData[0],
+        startY: unitData[1],
+        targetX: avgEnemyB[0],
+        targetY: avgEnemyB[1],
+        deathTime,
+        hasFired: false,
+      });
     }
   }
 
-  private buildUnitState(
-    entityId: EntityId,
-    armyIdx: 0 | 1,
-    dies: boolean,
-    enemyArmy: Army
-  ): UnitAnimState {
-    const unitData = this.world.get('unit', entityId);
-    const posX = unitData[0];
-    const posY = unitData[1];
-
-    // Find nearest enemy and plan a path toward them
-    let nearestEnemy: EntityId | null = null;
-    let nearestDist = Infinity;
-
-    for (const enemyId of enemyArmy.unitIds) {
-      const enemyData = this.world.get('unit', enemyId);
-      const dx = enemyData[0] - posX;
-      const dy = enemyData[1] - posY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestEnemy = enemyId;
-      }
+  private getArmyCenter(army: Army): [number, number] {
+    let sumX = 0, sumY = 0, count = 0;
+    for (const id of army.unitIds) {
+      const armyData = this.world.get('army', id);
+      if (armyData[1] <= 0) continue;
+      const unitData = this.world.get('unit', id);
+      sumX += unitData[0];
+      sumY += unitData[1];
+      count++;
     }
-
-    // Build path toward the nearest enemy
-    let path: [number, number][] = [];
-    if (nearestEnemy !== null) {
-      const enemyData = this.world.get('unit', nearestEnemy);
-      const [startCol, startRow] = worldToGrid(this.battlefield, posX, posY);
-      const [endCol, endRow] = worldToGrid(this.battlefield, enemyData[0], enemyData[1]);
-      const gridPath = findPath(this.battlefield, startCol, startRow, endCol, endRow);
-
-      // Convert grid path to world coordinates
-      path = gridPath.map(([c, r]) => gridToWorld(this.battlefield, c, r));
-    }
-
-    // If the unit dies, schedule its death across the 40%-90% range of the animation
-    // (first half is approach, deaths happen during combat phase)
-    const deathTime = dies ? 0.4 + seededRandom(entityId) * 0.5 : -1;
-
-    return {
-      entityId,
-      armyIdx: armyIdx as 0 | 1,
-      alive: true,
-      path,
-      pathIndex: 0,
-      deathTime,
-      targetId: nearestEnemy,
-      inCombat: false,
-    };
-  }
-
-  private moveUnit(us: UnitAnimState, dt: number): void {
-    if (us.path.length === 0) return;
-
-    const unitData = this.world.get('unit', us.entityId);
-    let posX = unitData[0];
-    let posY = unitData[1];
-
-    // Check if already in combat range of target
-    if (us.targetId !== null) {
-      const targetData = this.world.get('unit', us.targetId);
-      const dx = targetData[0] - posX;
-      const dy = targetData[1] - posY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist <= this._combatRange) {
-        if (!us.inCombat) {
-          us.inCombat = true;
-          // Emit combat effect
-          if (this.onCombat) {
-            this.onCombat((posX + targetData[0]) / 2, (posY + targetData[1]) / 2);
-          }
-        }
-        return; // Stop moving once in range
-      }
-    }
-
-    // Move toward next path waypoint
-    if (us.pathIndex < us.path.length) {
-      const [targetX, targetY] = us.path[us.pathIndex];
-      const dx = targetX - posX;
-      const dy = targetY - posY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < 0.5) {
-        // Arrived at waypoint, advance
-        us.pathIndex++;
-      } else {
-        // Move toward waypoint
-        const step = this._moveSpeed * dt;
-        const ratio = Math.min(step / dist, 1);
-        posX += dx * ratio;
-        posY += dy * ratio;
-
-        // Update ECS position
-        this.world.set('unit', us.entityId,
-          posX, posY,
-          unitData[2], unitData[3], unitData[4], unitData[5], unitData[6], unitData[7]
-        );
-      }
-    }
+    if (count === 0) return [100, 100];
+    return [sumX / count, sumY / count];
   }
 
   /**
-   * Select which unit indices should die.
-   * Spreads deaths across the formation (front units die first).
+   * Select which unit indices die — front-line units die first.
    */
   private selectDeathIndices(total: number, numDead: number): Set<number> {
     const indices = new Set<number>();
-    // Kill from the front (lower indices first — they're closer to the enemy)
     for (let i = 0; i < Math.min(numDead, total); i++) {
       indices.add(i);
     }
@@ -346,10 +297,6 @@ export class BattleAnimator {
   }
 }
 
-/**
- * Simple deterministic pseudo-random based on entity ID.
- * Returns a value in [0, 1).
- */
 function seededRandom(seed: number): number {
   let s = seed;
   s = ((s >>> 16) ^ s) * 0x45d9f3b;

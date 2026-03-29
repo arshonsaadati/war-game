@@ -18,9 +18,9 @@ export class InputHandler {
   // Keyboard state
   private keysDown: Set<string> = new Set();
 
-  // Callbacks
+  // Callbacks — return true to consume the click (prevents camera drag)
   onUnitClick: ((worldX: number, worldY: number) => void) | null = null;
-  onBattleFieldClick: ((worldX: number, worldY: number) => void) | null = null;
+  onBattleFieldClick: ((worldX: number, worldY: number) => boolean | void) | null = null;
   onRightClick: ((worldX: number, worldY: number) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, camera: Camera) {
@@ -99,8 +99,11 @@ export class InputHandler {
     );
 
     if (e.button === 0) {
-      this.mouseDown = true;
-      this.onBattleFieldClick?.(wx, wy);
+      const consumed = this.onBattleFieldClick?.(wx, wy);
+      // Only start camera drag if click wasn't consumed by placement
+      if (!consumed) {
+        this.mouseDown = true;
+      }
     } else if (e.button === 2) {
       this.onRightClick?.(wx, wy);
     }
@@ -127,7 +130,7 @@ export class InputHandler {
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
     const rect = this.canvas.getBoundingClientRect();
-    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    const factor = e.deltaY > 0 ? 0.95 : 1.05;
     this.camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
   };
 
