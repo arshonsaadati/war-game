@@ -150,6 +150,13 @@ async function main() {
     canvas2d.width = Math.floor(rect.width * devicePixelRatio);
     canvas2d.height = Math.floor(rect.height * devicePixelRatio);
     camera.setViewport(canvas.width, canvas.height);
+
+    // Auto-fit: zoom so entire battlefield is visible with some padding
+    const pad = 20;
+    const zoomX = canvas.width / (battlefield.width + pad * 2);
+    const zoomY = canvas.height / (battlefield.height + pad * 2);
+    camera.setZoom(Math.min(zoomX, zoomY));
+    camera.setPosition(battlefield.width / 2, battlefield.height / 2);
   }
 
   // --- World ---
@@ -218,13 +225,13 @@ async function main() {
   armySizeSlider.value = String(armyA.unitIds.length);
   armySizeLabel.textContent = String(armyA.unitIds.length);
 
-  // --- Camera ---
+  // --- Camera (fixed view — fits entire battlefield, no user controls) ---
   const camera = new Camera();
-  camera.setPosition(100, 100);
-  camera.setZoom(3);
+  camera.setPosition(battlefield.width / 2, battlefield.height / 2);
 
-  // --- Input ---
+  // --- Input (camera locked — fixed battlefield view, clicks still work for placement) ---
   const input = new InputHandler(canvas, camera);
+  input.cameraLocked = true;
 
   // --- Army Editor ---
   const editor = new ArmyEditor(

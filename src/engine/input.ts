@@ -18,6 +18,9 @@ export class InputHandler {
   // Keyboard state
   private keysDown: Set<string> = new Set();
 
+  /** When true, disables camera pan/zoom. Clicks still fire. */
+  cameraLocked = false;
+
   // Callbacks — return true to consume the click (prevents camera drag)
   onUnitClick: ((worldX: number, worldY: number) => void) | null = null;
   onBattleFieldClick: ((worldX: number, worldY: number) => boolean | void) | null = null;
@@ -65,6 +68,7 @@ export class InputHandler {
    * Call each frame to process held keys for camera movement.
    */
   update(dt: number): void {
+    if (this.cameraLocked) return;
     const speed = 200 / this.camera.zoom;
     const dtSec = dt / 1000;
 
@@ -100,8 +104,8 @@ export class InputHandler {
 
     if (e.button === 0) {
       const consumed = this.onBattleFieldClick?.(wx, wy);
-      // Only start camera drag if click wasn't consumed by placement
-      if (!consumed) {
+      // Only start camera drag if click wasn't consumed and camera isn't locked
+      if (!consumed && !this.cameraLocked) {
         this.mouseDown = true;
       }
     } else if (e.button === 2) {
@@ -129,6 +133,7 @@ export class InputHandler {
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    if (this.cameraLocked) return;
     const rect = this.canvas.getBoundingClientRect();
     const factor = e.deltaY > 0 ? 0.95 : 1.05;
     this.camera.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
