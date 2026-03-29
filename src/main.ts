@@ -1,30 +1,54 @@
 /**
  * War Game - WebGPU Monte Carlo Battle Simulator
- * Entry point: initializes GPU, sets up armies, runs simulation.
+ * Full entry point: GPU rendering, simulation, UI, game loop.
  */
 
 import { initGPU } from './engine/gpu';
 import { World } from './engine/ecs';
-import { BattleSimulator } from './simulation/simulator';
+import { Camera } from './engine/camera';
+import { InputHandler } from './engine/input';
+import { Renderer } from './renderer/renderer';
+import { BattleSimulator, BattleResult } from './simulation/simulator';
 import {
   UNIT_STRIDE,
   UnitType,
   createArmy,
   spawnFormation,
   buildUnitBuffer,
+  Army,
 } from './game/army';
 import { Battlefield } from './game/battlefield';
 import { GameLoop } from './game/game-loop';
 
-// UI Elements
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+// --- UI Elements ---
+const canvas = document.getElementById('battlefield') as HTMLCanvasElement;
+const histogramCanvas = document.getElementById('histogram') as HTMLCanvasElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
-const resultsEl = document.getElementById('results') as HTMLDivElement;
+const fpsEl = document.getElementById('fps') as HTMLSpanElement;
 const runBtn = document.getElementById('run-battle') as HTMLButtonElement;
+const resetBtn = document.getElementById('reset') as HTMLButtonElement;
+const simCountEl = document.getElementById('sim-count') as HTMLInputElement;
+const heatmapToggle = document.getElementById('heatmap-toggle') as HTMLInputElement;
+const heatmapOpacity = document.getElementById('heatmap-opacity') as HTMLInputElement;
+
+// Results display elements
+const resultAName = document.getElementById('result-a-name') as HTMLElement;
+const resultAWinPct = document.getElementById('result-a-win-pct') as HTMLElement;
+const resultAWins = document.getElementById('result-a-wins') as HTMLElement;
+const resultASurv = document.getElementById('result-a-surv') as HTMLElement;
+const resultBName = document.getElementById('result-b-name') as HTMLElement;
+const resultBWinPct = document.getElementById('result-b-win-pct') as HTMLElement;
+const resultBWins = document.getElementById('result-b-wins') as HTMLElement;
+const resultBSurv = document.getElementById('result-b-surv') as HTMLElement;
+const resultDraws = document.getElementById('result-draws') as HTMLElement;
+const resultTime = document.getElementById('result-time') as HTMLElement;
+const resultPanel = document.getElementById('results-panel') as HTMLElement;
+const unitCountA = document.getElementById('unit-count-a') as HTMLElement;
+const unitCountB = document.getElementById('unit-count-b') as HTMLElement;
 
 function log(msg: string) {
   statusEl.textContent = msg;
-  console.log(msg);
+  console.log(`[war-game] ${msg}`);
 }
 
 async function main() {
@@ -35,104 +59,225 @@ async function main() {
     gpuCtx = await initGPU();
   } catch (e) {
     log(`GPU init failed: ${(e as Error).message}`);
+    document.body.classList.add('no-gpu');
     return;
   }
 
-  log('WebGPU initialized. Setting up world...');
+  const device = gpuCtx.device;
+  log('WebGPU ready. Setting up world...');
 
-  // --- World setup ---
+  // --- Resize canvas to fill container ---
+  function resizeCanvas() {
+    const container = canvas.parentElement!;
+    const rect = container.getBoundingClientRect();
+    canvas.width = Math.floor(rect.width * devicePixelRatio);
+    canvas.height = Math.floor(rect.height * devicePixelRatio);
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    camera.setViewport(canvas.width, canvas.height);
+  }
+
+  // --- World ---
   const world = new World(10000);
   world.registerComponent('unit', Float32Array, UNIT_STRIDE);
-  world.registerComponent('army', Float32Array, 2); // [armyId, isAlive]
+  world.registerComponent('army', Float32Array, 2);
 
   // --- Battlefield ---
   const battlefield = new Battlefield({ width: 200, height: 200, cellSize: 10 });
   battlefield.generateRandom(42);
 
   // --- Armies ---
-  const armyA = createArmy(world, 0, 'Red Legion', [1, 0, 0]);
-  const armyB = createArmy(world, 1, 'Blue Guard', [0, 0, 1]);
+  let armyA!: Army;
+  let armyB!: Army;
 
-  // Army A: mixed force on the left
-  spawnFormation(world, armyA, UnitType.Infantry, 30, 100, 5, 10);
-  spawnFormation(world, armyA, UnitType.Archer, 20, 100, 3, 8);
-  spawnFormation(world, armyA, UnitType.Cavalry, 15, 70, 2, 5);
-  spawnFormation(world, armyA, UnitType.Artillery, 10, 100, 1, 3);
+  function setupArmies() {
+    armyA = createArmy(world, 0, 'Red Legion', [1, 0, 0]);
+    armyB = createArmy(world, 1, 'Blue Guard', [0, 0, 1]);
 
-  // Army B: mixed force on the right
-  spawnFormation(world, armyB, UnitType.Infantry, 170, 100, 5, 10);
-  spawnFormation(world, armyB, UnitType.Archer, 180, 100, 3, 8);
-  spawnFormation(world, armyB, UnitType.Cavalry, 185, 130, 2, 5);
-  spawnFormation(world, armyB, UnitType.Artillery, 190, 100, 1, 3);
+    // Army A: left side
+    spawnFormation(world, armyA, UnitType.Infantry, 30, 100, 5, 10);
+    spawnFormation(world, armyA, UnitType.Archer, 20, 100, 3, 8);
+    spawnFormation(world, armyA, UnitType.Cavalry, 15, 70, 2, 5);
+    spawnFormation(world, armyA, UnitType.Artillery, 10, 100, 1, 3);
 
-  log(`Armies created: ${armyA.name} (${armyA.unitIds.length} units) vs ${armyB.name} (${armyB.unitIds.length} units)`);
+    // Army B: right side
+    spawnFormation(world, armyB, UnitType.Infantry, 170, 100, 5, 10);
+    spawnFormation(world, armyB, UnitType.Archer, 180, 100, 3, 8);
+    spawnFormation(world, armyB, UnitType.Cavalry, 185, 130, 2, 5);
+    spawnFormation(world, armyB, UnitType.Artillery, 190, 100, 1, 3);
+
+    unitCountA.textContent = `${armyA.unitIds.length} units`;
+    unitCountB.textContent = `${armyB.unitIds.length} units`;
+  }
+
+  setupArmies();
+
+  // --- Camera ---
+  const camera = new Camera();
+  camera.setPosition(100, 100);
+  camera.setZoom(3);
+
+  // --- Input ---
+  const input = new InputHandler(canvas, camera);
+
+  // --- Renderer ---
+  const renderer = new Renderer(device, canvas);
+  await renderer.initialize();
+
+  // Upload terrain
+  renderer.terrain.updateTerrain(
+    battlefield.buildTerrainBuffer(),
+    battlefield.cols,
+    battlefield.rows
+  );
 
   // --- Simulator ---
-  const simulator = new BattleSimulator(gpuCtx.device);
+  const simulator = new BattleSimulator(device);
   await simulator.initialize();
-  log('Battle simulator ready.');
 
-  // --- Run battle ---
+  // --- Upload units to renderer ---
+  function uploadUnitsToGPU() {
+    const unitDataA = buildUnitBuffer(world, armyA);
+    const unitDataB = buildUnitBuffer(world, armyB);
+
+    // Combine both armies into single buffer
+    const totalUnits = armyA.unitIds.length + armyB.unitIds.length;
+    const combinedUnits = new Float32Array(totalUnits * UNIT_STRIDE);
+    combinedUnits.set(unitDataA, 0);
+    combinedUnits.set(unitDataB, unitDataA.length);
+
+    // Build army info buffer (army_id, is_alive per unit)
+    const armyInfo = new Float32Array(totalUnits * 2);
+    for (let i = 0; i < armyA.unitIds.length; i++) {
+      const data = world.get('army', armyA.unitIds[i]);
+      armyInfo[i * 2] = data[0];
+      armyInfo[i * 2 + 1] = data[1];
+    }
+    for (let i = 0; i < armyB.unitIds.length; i++) {
+      const idx = armyA.unitIds.length + i;
+      const data = world.get('army', armyB.unitIds[i]);
+      armyInfo[idx * 2] = data[0];
+      armyInfo[idx * 2 + 1] = data[1];
+    }
+
+    renderer.units.updateUnits(combinedUnits, armyInfo, totalUnits);
+  }
+
+  uploadUnitsToGPU();
+
+  // --- Heatmap data ---
+  let heatmapData: Float32Array | null = null;
+
+  function buildHeatmapFromResults(result: BattleResult) {
+    const cols = battlefield.cols;
+    const rows = battlefield.rows;
+    heatmapData = new Float32Array(cols * rows * 4);
+
+    // For each cell, calculate the relative strength of nearby units
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cx = (c + 0.5) * battlefield.cellSize;
+        const cy = (r + 0.5) * battlefield.cellSize;
+
+        let strengthA = 0;
+        let strengthB = 0;
+
+        // Sum influence from each army's units based on distance
+        for (let i = 0; i < armyA.unitIds.length; i++) {
+          const udata = world.get('unit', armyA.unitIds[i]);
+          const dx = udata[0] - cx;
+          const dy = udata[1] - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          strengthA += udata[4] / (1 + dist * 0.1); // attack / distance
+        }
+
+        for (let i = 0; i < armyB.unitIds.length; i++) {
+          const udata = world.get('unit', armyB.unitIds[i]);
+          const dx = udata[0] - cx;
+          const dy = udata[1] - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          strengthB += udata[4] / (1 + dist * 0.1);
+        }
+
+        const total = strengthA + strengthB;
+        const idx = (r * cols + c) * 4;
+        if (total > 0) {
+          heatmapData[idx + 0] = (strengthA / total) * result.winProbabilityA * 2;
+          heatmapData[idx + 1] = (strengthB / total) * result.winProbabilityB * 2;
+          heatmapData[idx + 2] = Math.min(total * 0.01, 1.0); // intensity
+        }
+        heatmapData[idx + 3] = 0;
+      }
+    }
+
+    renderer.heatmap.updateHeatmap(heatmapData, cols, rows);
+  }
+
+  // --- Battle execution ---
+  let lastResult: BattleResult | null = null;
+
   async function runBattle() {
     runBtn.disabled = true;
-    log('Running Monte Carlo simulation (4096 trials)...');
+    const numSims = parseInt(simCountEl.value) || 4096;
+    log(`Running Monte Carlo (${numSims} simulations)...`);
 
     const armyAData = buildUnitBuffer(world, armyA);
     const armyBData = buildUnitBuffer(world, armyB);
     const terrainData = battlefield.buildTerrainBuffer();
 
-    const startTime = performance.now();
+    const t0 = performance.now();
 
     const result = await simulator.runBattle(armyAData, armyBData, terrainData, {
-      numSimulations: 4096,
+      numSimulations: numSims,
       terrainCols: battlefield.cols,
       terrainRows: battlefield.rows,
       cellSize: battlefield.cellSize,
     });
 
-    const elapsed = (performance.now() - startTime).toFixed(1);
+    const elapsed = (performance.now() - t0).toFixed(1);
+    lastResult = result;
 
-    log(`Simulation complete in ${elapsed}ms`);
+    // Update results panel
+    resultAName.textContent = armyA.name;
+    resultAWinPct.textContent = `${(result.winProbabilityA * 100).toFixed(1)}%`;
+    resultAWins.textContent = `${result.armyAWins}`;
+    resultASurv.textContent = result.avgSurvivingA.toFixed(1);
+    resultBName.textContent = armyB.name;
+    resultBWinPct.textContent = `${(result.winProbabilityB * 100).toFixed(1)}%`;
+    resultBWins.textContent = `${result.armyBWins}`;
+    resultBSurv.textContent = result.avgSurvivingB.toFixed(1);
+    resultDraws.textContent = `${result.draws}`;
+    resultTime.textContent = `${elapsed}ms`;
+    resultPanel.classList.add('has-results');
 
-    resultsEl.innerHTML = `
-      <h3>Battle Results (${result.totalSims} simulations)</h3>
-      <div class="result-grid">
-        <div class="army-result army-a">
-          <h4>${armyA.name}</h4>
-          <div class="win-prob">${(result.winProbabilityA * 100).toFixed(1)}%</div>
-          <div>Wins: ${result.armyAWins}</div>
-          <div>Avg surviving: ${result.avgSurvivingA.toFixed(1)}</div>
-        </div>
-        <div class="vs">VS</div>
-        <div class="army-result army-b">
-          <h4>${armyB.name}</h4>
-          <div class="win-prob">${(result.winProbabilityB * 100).toFixed(1)}%</div>
-          <div>Wins: ${result.armyBWins}</div>
-          <div>Avg surviving: ${result.avgSurvivingB.toFixed(1)}</div>
-        </div>
-      </div>
-      <div class="draws">Draws: ${result.draws}</div>
-      <div class="timing">GPU compute time: ${elapsed}ms</div>
-    `;
+    log(`Done in ${elapsed}ms — ${armyA.name}: ${(result.winProbabilityA * 100).toFixed(1)}% | ${armyB.name}: ${(result.winProbabilityB * 100).toFixed(1)}%`);
 
-    // Draw histogram of outcomes
+    // Emit particles at battle midpoint for visual flair
+    renderer.particles.emitCombat(30, 100, 170, 100);
+    renderer.particles.emitCombat(100, 85, 100, 115);
+
+    // Update heatmap
+    buildHeatmapFromResults(result);
+
+    // Draw histogram
     drawHistogram(result.rawResults.map(r => r.armyASurviving - r.armyBSurviving));
 
     runBtn.disabled = false;
   }
 
-  runBtn.addEventListener('click', runBattle);
-
-  // --- Simple canvas visualization ---
+  // --- Histogram (2D canvas overlay) ---
   function drawHistogram(deltas: number[]) {
-    const ctx = canvas.getContext('2d');
+    const ctx = histogramCanvas.getContext('2d');
     if (!ctx) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
+    const w = histogramCanvas.width;
+    const h = histogramCanvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Build histogram bins
+    // Background
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(0, 0, w, h);
+
     const minVal = Math.min(...deltas);
     const maxVal = Math.max(...deltas);
     const range = maxVal - minVal || 1;
@@ -146,52 +291,93 @@ async function main() {
 
     const maxBin = Math.max(...bins);
     const barWidth = w / numBins;
+    const pad = 20;
 
-    // Draw bars
     for (let i = 0; i < numBins; i++) {
-      const barHeight = (bins[i] / maxBin) * (h - 40);
+      const barHeight = (bins[i] / maxBin) * (h - pad * 2);
       const x = i * barWidth;
-      const y = h - 20 - barHeight;
-
-      // Color: red for A wins, blue for B wins
+      const y = h - pad - barHeight;
       const binCenter = minVal + (i + 0.5) * (range / numBins);
+
       if (binCenter > 0) {
-        ctx.fillStyle = `rgba(220, 50, 50, ${0.5 + bins[i] / maxBin * 0.5})`;
+        ctx.fillStyle = `rgba(220, 60, 60, ${0.5 + bins[i] / maxBin * 0.5})`;
       } else if (binCenter < 0) {
-        ctx.fillStyle = `rgba(50, 50, 220, ${0.5 + bins[i] / maxBin * 0.5})`;
+        ctx.fillStyle = `rgba(60, 70, 220, ${0.5 + bins[i] / maxBin * 0.5})`;
       } else {
         ctx.fillStyle = 'rgba(128, 128, 128, 0.7)';
       }
 
-      ctx.fillRect(x, y, barWidth - 1, barHeight);
+      ctx.fillRect(x, y, Math.max(barWidth - 1, 1), barHeight);
     }
 
-    // Draw center line
+    // Center line
     const centerX = ((0 - minVal) / range) * w;
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(centerX, 0);
-    ctx.lineTo(centerX, h - 20);
+    ctx.lineTo(centerX, h - pad);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Labels
-    ctx.fillStyle = '#aaa';
-    ctx.font = '12px monospace';
+    ctx.fillStyle = '#666';
+    ctx.font = '10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('← B wins | A wins →', w / 2, h - 4);
+    ctx.fillText('B wins  |  A wins', w / 2, h - 4);
   }
 
-  // Initial render
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#666';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Click "Run Battle" to simulate', canvas.width / 2, canvas.height / 2);
-  }
+  // --- UI event handlers ---
+  runBtn.addEventListener('click', runBattle);
+
+  resetBtn.addEventListener('click', () => {
+    // Re-create world
+    setupArmies();
+    uploadUnitsToGPU();
+    heatmapData = null;
+    lastResult = null;
+    resultPanel.classList.remove('has-results');
+    log('Battlefield reset.');
+  });
+
+  heatmapToggle.addEventListener('change', () => {
+    renderer.heatmap.visible = heatmapToggle.checked;
+  });
+
+  heatmapOpacity.addEventListener('input', () => {
+    renderer.heatmap.opacity = parseFloat(heatmapOpacity.value);
+  });
+
+  // --- Game loop ---
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  let elapsedTime = 0;
+  const gameLoop = new GameLoop(
+    50, // tick rate (ms)
+    (dt, _elapsed) => {
+      // Simulation tick — currently just camera
+      input.update(dt);
+      camera.update();
+    },
+    (dt, _elapsed) => {
+      // Render frame
+      elapsedTime += dt / 1000;
+      fpsEl.textContent = `${gameLoop.fps}`;
+
+      renderer.render(
+        camera,
+        elapsedTime,
+        dt,
+        { cols: battlefield.cols, rows: battlefield.rows, cellSize: battlefield.cellSize },
+        -1 // no selection yet
+      );
+    }
+  );
+
+  log(`Ready. ${armyA.name} (${armyA.unitIds.length}) vs ${armyB.name} (${armyB.unitIds.length})`);
+  gameLoop.start();
 }
 
 main();

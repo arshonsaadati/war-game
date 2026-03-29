@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>War Game - WebGPU Monte Carlo Battle Simulator</title>
+  <style>
+    :root {
+      --bg-primary: #0a0a0e;
+      --bg-secondary: #12121a;
+      --bg-panel: #161622;
+      --border: #2a2a3a;
+      --text: #d0d0d8;
+      --text-dim: #666680;
+      --red: #e04040;
+      --red-dim: rgba(220, 60, 60, 0.15);
+      --blue: #4050e0;
+      --blue-dim: rgba(60, 70, 220, 0.15);
+      --accent: #7c6ef0;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: auto 1fr auto;
+      grid-template-areas:
+        "header header"
+        "sidebar viewport"
+        "sidebar footer";
+    }
+
+    /* --- Header --- */
+    header {
+      grid-area: header;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      background: linear-gradient(135deg, var(--red), var(--blue));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-stats {
+      display: flex;
+      gap: 16px;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .header-stats span { color: var(--text); }
+
+    #status {
+      flex: 1;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      font-family: monospace;
+      padding: 0 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar {
+      grid-area: sidebar;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .panel {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    /* Army panels */
+    .army-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .army-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .army-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .army-name.red { color: var(--red); }
+    .army-name.blue { color: var(--blue); }
+
+    .army-units {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .control-row label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 4px;
+    }
+
+    input[type="number"] {
+      width: 80px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-family: monospace;
+    }
+
+    input[type="checkbox"] { accent-color: var(--accent); }
+
+    /* Buttons */
+    .btn {
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--red), var(--blue));
+      color: white;
+      width: 100%;
+    }
+
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.15); }
+
+    .btn-secondary {
+      background: var(--bg-primary);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      width: 100%;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      color: var(--text);
+      border-color: var(--text-dim);
+    }
+
+    /* Results panel */
+    .results-grid {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+      opacity: 0.3;
+      transition: opacity 0.3s;
+    }
+
+    .has-results .results-grid { opacity: 1; }
+
+    .result-col { text-align: center; }
+
+    .win-pct {
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-family: monospace;
+    }
+
+    .win-pct.red { color: var(--red); }
+    .win-pct.blue { color: var(--blue); }
+
+    .result-detail {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .vs-divider {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+
+    .result-footer {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+
+    /* --- Viewport --- */
+    .viewport {
+      grid-area: viewport;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-primary);
+    }
+
+    .viewport canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .viewport-hint {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      background: rgba(0,0,0,0.6);
+      padding: 4px 12px;
+      border-radius: 12px;
+      pointer-events: none;
+      opacity: 0.7;
+    }
+
+    /* --- Footer --- */
+    footer {
+      grid-area: footer;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 0;
+      display: flex;
+      align-items: stretch;
+    }
+
+    .histogram-container {
+      flex: 1;
+      height: 100px;
+      position: relative;
+    }
+
+    .histogram-container canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .histogram-label {
+      position: absolute;
+      top: 4px;
+      left: 8px;
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* --- No GPU fallback --- */
+    .no-gpu .viewport {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .no-gpu .viewport::after {
+      content: 'WebGPU not available. Try Chrome 113+ with --enable-unsafe-webgpu flag.';
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 20px;
+    }
+
+    /* --- Responsive --- */
+    @media (max-width: 768px) {
+      body {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto auto;
+        grid-template-areas:
+          "header"
+          "viewport"
+          "sidebar"
+          "footer";
+      }
+
+      .sidebar {
+        flex-direction: row;
+        overflow-x: auto;
+        border-right: none;
+        border-top: 1px solid var(--border);
+      }
+
+      .panel { min-width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <div class="logo">WAR GAME</div>
+    <div id="status">Initializing...</div>
+    <div class="header-stats">
+      FPS: <span id="fps">0</span>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <!-- Army A -->
+    <div class="panel">
+      <div class="panel-title">Army A</div>
+      <div class="army-panel">
+        <div class="army-header">
+          <span class="army-name red">Red Legion</span>
+          <span class="army-units" id="unit-count-a">0 units</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Army B -->
+    <div class="panel">
+      <div class="panel-title">Army B</div>
+      <div class="army-panel">
+        <div class="army-header">
+          <span class="army-name blue">Blue Guard</span>
+          <span class="army-units" id="unit-count-b">0 units</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Simulation Controls -->
+    <div class="panel">
+      <div class="panel-title">Simulation</div>
+      <div class="controls">
+        <div class="control-row">
+          <label for="sim-count">Trials</label>
+          <input type="number" id="sim-count" value="4096" min="64" max="65536" step="64">
+        </div>
+        <div class="control-row">
+          <label for="heatmap-toggle">Heatmap</label>
+          <input type="checkbox" id="heatmap-toggle" checked>
+        </div>
+        <div class="control-row">
+          <label for="heatmap-opacity">Opacity</label>
+          <input type="range" id="heatmap-opacity" min="0" max="1" step="0.05" value="0.4">
+        </div>
+        <button class="btn btn-primary" id="run-battle">Run Battle</button>
+        <button class="btn btn-secondary" id="reset">Reset</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="panel" id="results-panel">
+      <div class="panel-title">Results</div>
+      <div class="results-grid">
+        <div class="result-col">
+          <div class="result-detail" id="result-a-name">Red Legion</div>
+          <div class="win-pct red" id="result-a-win-pct">--</div>
+          <div class="result-detail">Wins: <span id="result-a-wins">--</span></div>
+          <div class="result-detail">Avg surv: <span id="result-a-surv">--</span></div>
+        </div>
+        <div class="vs-divider">VS</div>
+        <div class="result-col">
+          <div class="result-detail" id="result-b-name">Blue Guard</div>
+          <div class="win-pct blue" id="result-b-win-pct">--</div>
+          <div class="result-detail">Wins: <span id="result-b-wins">--</span></div>
+          <div class="result-detail">Avg surv: <span id="result-b-surv">--</span></div>
+        </div>
+      </div>
+      <div class="result-footer">
+        <span>Draws: <span id="result-draws">--</span></span>
+        <span>GPU: <span id="result-time">--</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Viewport (WebGPU canvas) -->
+  <div class="viewport">
+    <canvas id="battlefield"></canvas>
+    <div class="viewport-hint">Drag to pan | Scroll to zoom | WASD to move</div>
+  </div>
+
+  <!-- Footer: Histogram -->
+  <footer>
+    <div class="histogram-container">
+      <span class="histogram-label">Outcome Distribution</span>
+      <canvas id="histogram" width="800" height="100"></canvas>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

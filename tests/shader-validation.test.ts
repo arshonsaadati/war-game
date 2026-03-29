@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { validateWGSL, validateBufferLayout } from './validators/shader-compile';
 import { UNIT_STRIDE } from '../src/game/army';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHADER_DIR = resolve(__dirname, '../src/simulation');
 
 function loadShader(name: string): string {

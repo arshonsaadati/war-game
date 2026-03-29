@@ -10,15 +10,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["@webgpu/types"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
-    "paths": {
-      "@engine/*": ["src/engine/*"],
-      "@simulation/*": ["src/simulation/*"],
-      "@renderer/*": ["src/renderer/*"],
-      "@game/*": ["src/game/*"]
-    }
+    "types": ["@webgpu/types", "node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules"]
