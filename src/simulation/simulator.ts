@@ -51,10 +51,25 @@ export class BattleSimulator {
       code: monteCarloShader,
     });
 
+    // Log shader compilation errors
+    const mcInfo = await this.monteCarloModule.getCompilationInfo();
+    for (const msg of mcInfo.messages) {
+      console[msg.type === 'error' ? 'error' : 'warn'](
+        `[WGSL ${msg.type}] line ${msg.lineNum}: ${msg.message}`
+      );
+    }
+
     this.reductionModule = this.device.createShaderModule({
       label: 'Reduction Shader',
       code: reductionShader,
     });
+
+    const redInfo = await this.reductionModule.getCompilationInfo();
+    for (const msg of redInfo.messages) {
+      console[msg.type === 'error' ? 'error' : 'warn'](
+        `[WGSL ${msg.type}] line ${msg.lineNum}: ${msg.message}`
+      );
+    }
 
     this.monteCarloPipeline = await this.device.createComputePipelineAsync({
       label: 'Monte Carlo Pipeline',

@@ -133,13 +133,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Initialize RNG with unique seed per simulation
   var seed = params.rand_seed ^ pcg_hash(sim_id);
 
-  // Copy unit health into local simulation state
-  // We simulate combat rounds until one side is eliminated
-  var health_a = array<f32, 256>();
-  var health_b = array<f32, 256>();
+  // Copy unit health into local simulation state.
+  // Max 96 units per side to stay within GPU register limits.
+  var health_a = array<f32, 96>();
+  var health_b = array<f32, 96>();
 
-  let count_a = min(params.num_units_a, 256u);
-  let count_b = min(params.num_units_b, 256u);
+  let count_a = min(params.num_units_a, 96u);
+  let count_b = min(params.num_units_b, 96u);
 
   for (var i = 0u; i < count_a; i++) {
     health_a[i] = army_a[i].health;
@@ -173,19 +173,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
       // Pick random alive target in B
       let target_roll = u32(rand_float(&seed) * f32(count_b));
-      var target = target_roll % count_b;
+      var tgt = target_roll % count_b;
 
       // Find next alive target
       for (var t = 0u; t < count_b; t++) {
-        if (health_b[target] > 0.0) { break; }
-        target = (target + 1u) % count_b;
+        if (health_b[tgt] > 0.0) { break; }
+        tgt = (tgt + 1u) % count_b;
       }
-      if (health_b[target] <= 0.0) { break; }
+      if (health_b[tgt] <= 0.0) { break; }
 
       let att_terrain = get_terrain(army_a[i].pos_x, army_a[i].pos_y);
-      let def_terrain = get_terrain(army_b[target].pos_x, army_b[target].pos_y);
-      let dmg = calc_damage(army_a[i], army_b[target], att_terrain, def_terrain, &seed);
-      health_b[target] -= dmg;
+      let def_terrain = get_terrain(army_b[tgt].pos_x, army_b[tgt].pos_y);
+      let dmg = calc_damage(army_a[i], army_b[tgt], att_terrain, def_terrain, &seed);
+      health_b[tgt] -= dmg;
       total_damage_to_b += dmg;
     }
 
@@ -194,18 +194,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (health_b[i] <= 0.0) { continue; }
 
       let target_roll = u32(rand_float(&seed) * f32(count_a));
-      var target = target_roll % count_a;
+      var tgt = target_roll % count_a;
 
       for (var t = 0u; t < count_a; t++) {
-        if (health_a[target] > 0.0) { break; }
-        target = (target + 1u) % count_a;
+        if (health_a[tgt] > 0.0) { break; }
+        tgt = (tgt + 1u) % count_a;
       }
-      if (health_a[target] <= 0.0) { break; }
+      if (health_a[tgt] <= 0.0) { break; }
 
       let att_terrain = get_terrain(army_b[i].pos_x, army_b[i].pos_y);
-      let def_terrain = get_terrain(army_a[target].pos_x, army_a[target].pos_y);
-      let dmg = calc_damage(army_b[i], army_a[target], att_terrain, def_terrain, &seed);
-      health_a[target] -= dmg;
+      let def_terrain = get_terrain(army_a[tgt].pos_x, army_a[tgt].pos_y);
+      let dmg = calc_damage(army_b[i], army_a[tgt], att_terrain, def_terrain, &seed);
+      health_a[tgt] -= dmg;
       total_damage_to_a += dmg;
     }
   }

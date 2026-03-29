@@ -9,14 +9,14 @@ struct SimResult {
 };
 
 struct BattleStats {
-  army_a_wins: u32,
-  army_b_wins: u32,
-  draws: u32,
-  total_sims: u32,
-  avg_a_surviving: f32,
-  avg_b_surviving: f32,
-  avg_damage_to_a: f32,
-  avg_damage_to_b: f32,
+  army_a_wins: atomic<u32>,
+  army_b_wins: atomic<u32>,
+  draws: atomic<u32>,
+  total_sims: atomic<u32>,
+  avg_a_surviving: atomic<u32>,
+  avg_b_surviving: atomic<u32>,
+  _pad0: u32,
+  _pad1: u32,
 };
 
 @group(0) @binding(0) var<storage, read> results: array<SimResult>;
@@ -29,12 +29,11 @@ var<workgroup> local_draws: atomic<u32>;
 var<workgroup> local_a_surv: atomic<u32>;
 var<workgroup> local_b_surv: atomic<u32>;
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn main(
   @builtin(global_invocation_id) gid: vec3<u32>,
   @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-  // Initialize workgroup shared memory
   if (lid.x == 0u) {
     atomicStore(&local_a_wins, 0u);
     atomicStore(&local_b_wins, 0u);
@@ -62,11 +61,12 @@ fn main(
 
   workgroupBarrier();
 
-  // First thread in workgroup writes to global
   if (lid.x == 0u) {
     atomicAdd(&stats.army_a_wins, atomicLoad(&local_a_wins));
     atomicAdd(&stats.army_b_wins, atomicLoad(&local_b_wins));
     atomicAdd(&stats.draws, atomicLoad(&local_draws));
-    atomicAdd(&stats.total_sims, min(256u, num_sims - gid.x + lid.x));
+    atomicAdd(&stats.total_sims, atomicLoad(&local_a_wins) + atomicLoad(&local_b_wins) + atomicLoad(&local_draws));
+    atomicAdd(&stats.avg_a_surviving, atomicLoad(&local_a_surv));
+    atomicAdd(&stats.avg_b_surviving, atomicLoad(&local_b_surv));
   }
 }

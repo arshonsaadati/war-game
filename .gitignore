@@ -1,5 +1,7 @@
 node_modules/
 dist/
 test-results.json
+browser-test-results.json
+test-screenshots/
 *.log
 .vite/

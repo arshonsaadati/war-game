@@ -16,6 +16,8 @@ import {
   checkRendererFiles,
   checkCSS,
 } from './validators/gui-checks';
+import { runPerfChecks } from './validators/perf-checks';
+import { runIntegrationChecks } from './validators/integration-checks';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -171,6 +173,22 @@ check('typescript:key-exports', () => {
     return { status: 'fail', message: (e as Error).message };
   }
 });
+
+// ==========================================
+// SECTION 6: Performance & code quality checks
+// ==========================================
+const perfResults = runPerfChecks();
+for (const r of perfResults) {
+  results.push(r);
+}
+
+// ==========================================
+// SECTION 7: Cross-module integration checks
+// ==========================================
+const integrationResults = runIntegrationChecks();
+for (const r of integrationResults) {
+  results.push(r);
+}
 
 // ==========================================
 // Output report

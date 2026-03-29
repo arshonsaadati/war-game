@@ -19,6 +19,7 @@ import {
 } from './game/army';
 import { Battlefield } from './game/battlefield';
 import { GameLoop } from './game/game-loop';
+import { BattleAnimator } from './game/battle-animator';
 
 // --- UI Elements ---
 const canvas = document.getElementById('battlefield') as HTMLCanvasElement;
@@ -30,6 +31,9 @@ const resetBtn = document.getElementById('reset') as HTMLButtonElement;
 const simCountEl = document.getElementById('sim-count') as HTMLInputElement;
 const heatmapToggle = document.getElementById('heatmap-toggle') as HTMLInputElement;
 const heatmapOpacity = document.getElementById('heatmap-opacity') as HTMLInputElement;
+const playBtn = document.getElementById('play-battle') as HTMLButtonElement;
+const pauseBtn = document.getElementById('pause-battle') as HTMLButtonElement;
+const animSpeedSlider = document.getElementById('anim-speed') as HTMLInputElement;
 
 // Results display elements
 const resultAName = document.getElementById('result-a-name') as HTMLElement;
@@ -164,6 +168,9 @@ async function main() {
   }
 
   uploadUnitsToGPU();
+
+  // --- Battle Animator ---
+  let battleAnimator: BattleAnimator | null = null;
 
   // --- Heatmap data ---
   let heatmapData: Float32Array | null = null;
@@ -332,6 +339,14 @@ async function main() {
   runBtn.addEventListener('click', runBattle);
 
   resetBtn.addEventListener('click', () => {
+    // Reset animation if active
+    if (battleAnimator) {
+      battleAnimator.reset();
+      battleAnimator = null;
+      playBtn.disabled = false;
+      runBtn.disabled = false;
+      pauseBtn.textContent = 'Pause';
+    }
     // Re-create world
     setupArmies();
     uploadUnitsToGPU();
@@ -349,6 +364,54 @@ async function main() {
     renderer.heatmap.opacity = parseFloat(heatmapOpacity.value);
   });
 
+  playBtn.addEventListener('click', async () => {
+    if (!lastResult) {
+      log('Run a battle first, then play the animation.');
+      return;
+    }
+
+    // Reset any previous animation
+    if (battleAnimator) {
+      battleAnimator.reset();
+    }
+
+    battleAnimator = new BattleAnimator(world, armyA, armyB, battlefield, {
+      duration: 10,
+      combatRange: 12,
+      moveSpeed: 15,
+    });
+
+    battleAnimator.onCombatEvent((x, y) => {
+      renderer.particles.emitCombat(x, y, x, y);
+    });
+
+    battleAnimator.start(lastResult);
+    playBtn.disabled = true;
+    runBtn.disabled = true;
+    log('Battle animation playing...');
+  });
+
+  pauseBtn.addEventListener('click', () => {
+    if (!battleAnimator) return;
+
+    if (battleAnimator.state === 'running') {
+      battleAnimator.pause();
+      pauseBtn.textContent = 'Resume';
+      log('Animation paused.');
+    } else if (battleAnimator.state === 'paused') {
+      battleAnimator.resume();
+      pauseBtn.textContent = 'Pause';
+      log('Animation resumed.');
+    }
+  });
+
+  animSpeedSlider.addEventListener('input', () => {
+    const speed = parseFloat(animSpeedSlider.value);
+    if (battleAnimator) {
+      battleAnimator.setSpeed(speed);
+    }
+  });
+
   // --- Game loop ---
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
@@ -357,9 +420,25 @@ async function main() {
   const gameLoop = new GameLoop(
     50, // tick rate (ms)
     (dt, _elapsed) => {
-      // Simulation tick — currently just camera
+      // Simulation tick — camera + battle animation
       input.update(dt);
       camera.update();
+
+      // Update battle animation
+      if (battleAnimator && battleAnimator.state === 'running') {
+        battleAnimator.update(dt / 1000);
+        uploadUnitsToGPU();
+
+        const pct = (battleAnimator.progress * 100).toFixed(0);
+        log(`Battle animation: ${pct}%`);
+
+        if (battleAnimator.isComplete()) {
+          playBtn.disabled = false;
+          runBtn.disabled = false;
+          pauseBtn.textContent = 'Pause';
+          log('Battle animation complete.');
+        }
+      }
     },
     (dt, _elapsed) => {
       // Render frame
